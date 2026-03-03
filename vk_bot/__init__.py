@@ -7,12 +7,20 @@ from collections.abc import Callable
 from typing import Any
 
 from vk_bot import apihelper, exception, types, util
+from vk_bot.apihelper import ApiClient
+from vk_bot.config import HttpConfig, Token
 from vk_bot.handlers import CallbackQueryHandler, MessageHandler, MiddlewareHandler
+from vk_bot.http_client import HttpClient
 from vk_bot.state.context import StateContext
+from vk_bot.state.fsm import FSMRegistry, VKBotFSM
 from vk_bot.state.group import StatesGroup
-from vk_bot.state.fsm import VKBotFSM, FSMRegistry
 from vk_bot.state.manager import StateManager
-from vk_bot.state.storage import BaseStorage, MemoryStorage, RedisStorage, PostgresStorage
+from vk_bot.state.storage import (
+    BaseStorage,
+    MemoryStorage,
+    PostgresStorage,
+    RedisStorage,
+)
 
 
 class VKBot:
@@ -25,15 +33,20 @@ class VKBot:
         token: VK community token.
         group_id: Community ID. Resolved automatically if not provided.
         state_storage: State storage backend (defaults to MemoryStorage).
+        http_config: HTTP transport configuration (proxy, timeouts, retries).
     """
 
     def __init__(
         self,
-        token: str,
+        token: str | None = None,
         group_id: int | None = None,
         state_storage: BaseStorage | None = None,
+        http_config: HttpConfig | None = None,
     ):
-        self.token = token
+        if not token:
+            raise ValueError("token must be provided")
+        self.api = ApiClient(token=Token(token), http=HttpClient(http_config))
+
         self._group_id = group_id
         self._me: types.User | None = None
         self.message_handlers: list[MessageHandler] = []
@@ -44,16 +57,20 @@ class VKBot:
         self.state_manager = StateManager(state_storage or MemoryStorage())
 
     @property
+    def token(self) -> str:
+        return str(self.api.token)
+
+    @property
     def group_id(self) -> int:
         if self._group_id is None:
-            self._group_id = apihelper.get_group_id(self.token)
+            self._group_id = self.api.get_group_id()
         return self._group_id
 
     @property
     def me(self) -> types.User:
         if not self._me:
-            data = apihelper.get_me(self.token)
-            self._me = types.User.from_dict(data)
+            data = self.api.get_me()
+            self._me = types.User(**data)
         return self._me
 
     def get_state(self, user_id: int) -> str | None:
@@ -176,8 +193,7 @@ class VKBot:
             VK API response.
         """
         markup_dict = reply_markup.to_dict() if reply_markup else None
-        return apihelper.send_message(
-            self.token,
+        return self.api.send_message(
             chat_id,
             text,
             reply_markup=markup_dict,
@@ -210,8 +226,7 @@ class VKBot:
             reply_markup: Keyboard.
         """
         markup_dict = reply_markup.to_dict() if reply_markup else None
-        return apihelper.send_photo(
-            self.token,
+        return self.api.send_photo(
             chat_id,
             photo,
             caption=caption,
@@ -240,8 +255,7 @@ class VKBot:
             reply_markup: Keyboard.
         """
         markup_dict = reply_markup.to_dict() if reply_markup else None
-        return apihelper.send_document(
-            self.token,
+        return self.api.send_document(
             chat_id,
             document,
             caption=caption,
@@ -268,8 +282,8 @@ class VKBot:
         elif text:
             params["event_data"] = json.dumps({"type": "show_snackbar", "text": text})
 
-        return apihelper._make_request(
-            self.token, "messages.sendMessageEventAnswer", params
+        return self.api._make_request(
+            "messages.sendMessageEventAnswer", params
         )
 
     def polling(self, non_stop: bool = True, interval: int = 1):
@@ -286,11 +300,11 @@ class VKBot:
         while self._polling:
             try:
                 if not self.lp_server:
-                    self.lp_server = apihelper.get_long_poll_server(
-                        self.token, self.group_id
+                    self.lp_server = self.api.get_long_poll_server(
+                        self.group_id
                     )
 
-                raw_updates = apihelper.get_long_poll_updates(
+                raw_updates = self.api.get_long_poll_updates(
                     self.lp_server.server, self.lp_server.key, self.lp_server.ts
                 )
 
@@ -314,7 +328,7 @@ class VKBot:
                     raise
                 time.sleep(interval)
 
-    def get_fsm(self, user_id: int, fsm_name: str = "default") -> "FiniteStateMachine":
+    def get_fsm(self, user_id: int, fsm_name: str = "default") -> VKBotFSM:
         state = self.get_state(user_id)
         fsm = FSMRegistry.get_or_create(fsm_name)
         fsm.current_state = state
@@ -367,14 +381,17 @@ class VKBot:
 
 
 __all__ = [
+    "ApiClient",
     "FSMRegistry",
-    "VKBotFSM",
+    "HttpConfig",
     "MemoryStorage",
+    "PostgresStorage",
     "RedisStorage",
     "StateContext",
     "StateManager",
     "StatesGroup",
     "VKBot",
+    "VKBotFSM",
     "exception",
     "types",
     "util",

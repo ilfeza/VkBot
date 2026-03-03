@@ -143,7 +143,7 @@ class PostgresStorage(BaseStorage):
             raise ImportError(
                 "asyncpg is not installed. Install with: pip install vk-bot[postgres]"
             )
-        
+
         self.dsn = dsn
         self.pool_min_size = pool_min_size
         self.pool_max_size = pool_max_size
@@ -182,7 +182,7 @@ class PostgresStorage(BaseStorage):
 
     async def get_state(self, user_id: int) -> str | None:
         pool = await self._get_pool()
-        
+
         async with pool.acquire() as conn:
             result = await conn.fetchval(
                 f"SELECT state FROM {self.table_prefix}_states WHERE user_id = $1",
@@ -192,60 +192,57 @@ class PostgresStorage(BaseStorage):
 
     async def set_state(self, user_id: int, state: str):
         pool = await self._get_pool()
-        
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    f"""
-                    INSERT INTO {self.table_prefix}_states (user_id, state, updated_at)
-                    VALUES ($1, $2, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id) 
-                    DO UPDATE SET state = $2, updated_at = CURRENT_TIMESTAMP
-                    """,
-                    user_id,
-                    state,
-                )
+
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                f"""
+                INSERT INTO {self.table_prefix}_states (user_id, state, updated_at)
+                VALUES ($1, $2, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id)
+                DO UPDATE SET state = $2, updated_at = CURRENT_TIMESTAMP
+                """,
+                user_id,
+                state,
+            )
 
     async def update_data(self, user_id: int, **kwargs):
         pool = await self._get_pool()
-        
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                for key, value in kwargs.items():
-                    json_value = json.dumps(value)
 
-                    await conn.execute(
-                        f"""
-                        INSERT INTO {self.table_prefix}_data (user_id, data, updated_at)
-                        VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
-                        ON CONFLICT (user_id) DO UPDATE
-                        SET data = jsonb_set(
-                            COALESCE({self.table_prefix}_data.data, '{{}}'::jsonb),
-                            $3,
-                            $4::jsonb,
-                            true
-                        ),
-                        updated_at = CURRENT_TIMESTAMP
-                        """,
-                        user_id,
-                        json.dumps({key: value}),
-                        f"{{{key}}}",
-                        json_value,
-                    )
+        async with pool.acquire() as conn, conn.transaction():
+            for key, value in kwargs.items():
+                json_value = json.dumps(value)
+
+                await conn.execute(
+                    f"""
+                    INSERT INTO {self.table_prefix}_data (user_id, data, updated_at)
+                    VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET data = jsonb_set(
+                        COALESCE({self.table_prefix}_data.data, '{{}}'::jsonb),
+                        $3,
+                        $4::jsonb,
+                        true
+                    ),
+                    updated_at = CURRENT_TIMESTAMP
+                    """,
+                    user_id,
+                    json.dumps({key: value}),
+                    f"{{{key}}}",
+                    json_value,
+                )
 
     async def delete(self, user_id: int):
         pool = await self._get_pool()
 
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    f"DELETE FROM {self.table_prefix}_states WHERE user_id = $1",
-                    user_id,
-                )
-                await conn.execute(
-                    f"DELETE FROM {self.table_prefix}_data WHERE user_id = $1",
-                    user_id,
-                )
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                f"DELETE FROM {self.table_prefix}_states WHERE user_id = $1",
+                user_id,
+            )
+            await conn.execute(
+                f"DELETE FROM {self.table_prefix}_data WHERE user_id = $1",
+                user_id,
+            )
 
     async def close(self):
         if self._pool:

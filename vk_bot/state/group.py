@@ -34,4 +34,3 @@ class StatesGroup:
 
     def __repr__(self) -> str:
         return f"<StatesGroup '{self.__class__.__name__}'>"
-

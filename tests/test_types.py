@@ -4,7 +4,7 @@ from vk_bot import types
 
 
 def test_user_from_dict_helpers() -> None:
-    user = types.User.from_dict(
+    user = types.User.model_validate(
         {
             "id": 111222333,
             "first_name": "Ivan",
@@ -17,7 +17,7 @@ def test_user_from_dict_helpers() -> None:
 
 
 def test_message_from_dict_text() -> None:
-    message = types.Message.from_dict(
+    message = types.Message.model_validate(
         {
             "id": 1,
             "date": 1_700_000_000,
@@ -35,7 +35,7 @@ def test_message_from_dict_text() -> None:
 
 
 def test_message_from_dict_with_attachments() -> None:
-    message = types.Message.from_dict(
+    message = types.Message.model_validate(
         {
             "id": 4096,
             "date": 1_700_000_000,
@@ -71,14 +71,12 @@ def test_message_from_dict_with_attachments() -> None:
 
 
 def test_callback_query_parses_payload_json_string() -> None:
-    callback = types.CallbackQuery.from_dict(
-        {
-            "event_id": "123456_abcdef",
-            "user_id": 111222333,
-            "peer_id": 111222333,
-            "conversation_message_id": 256,
-            "payload": '{"data":"confirm"}',
-        },
+    callback = types.CallbackQuery(
+        id="123456_abcdef",
+        from_id=111222333,
+        peer_id=111222333,
+        message_id=256,
+        payload='{"data":"confirm"}',
     )
 
     assert callback.id == "123456_abcdef"

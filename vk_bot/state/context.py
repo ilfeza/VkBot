@@ -1,11 +1,13 @@
-from typing import TYPE_CHECKING, Any
 from dataclasses import dataclass, field
-from vk_bot.state.fsm import VKBotFSM, FSMRegistry
+from typing import TYPE_CHECKING, Any
+
+from vk_bot.state.fsm import FSMRegistry, VKBotFSM
 
 if TYPE_CHECKING:
     from vk_bot import VKBot
 
 
+@dataclass
 class StateContext:
     """User state context.
 
@@ -28,9 +30,6 @@ class StateContext:
     def __post_init__(self):
         self._manager = self.bot.state_manager
         self.fsm = FSMRegistry.get_or_create(self.fsm_name)
-        current_state = self._manager.get_state(self.user_id)
-        if current_state:
-            self.fsm.machine.set_state(current_state)
 
     @property
     def current(self) -> str | None:

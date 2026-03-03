@@ -1,7 +1,7 @@
 import json
-from typing import Any
-from pydantic import BaseModel, Field, validator
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class User(BaseModel):
@@ -129,11 +129,7 @@ class Message(BaseModel):
     _from_user: User | None = None
     _chat: Chat | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
-        json_encoders = {
-            datetime: lambda v: int(v.timestamp())
-        }    
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
     def chat(self) -> Chat:
@@ -199,16 +195,16 @@ class KeyboardButton(BaseModel):
     text: str
     color: str = "primary"
 
+    model_config = ConfigDict(extra="forbid")
+
     def to_dict(self) -> dict:
         return {
             "action": {
-                "type": "text", 
+                "type": "text",
                 "label": self.text
-            }, 
+            },
             "color": self.color
         }
-    class Config:
-        extra = "forbid"
 
 
 class InlineKeyboardButton(BaseModel):
@@ -220,7 +216,8 @@ class InlineKeyboardButton(BaseModel):
     vk_app_id: int | None = None
     owner_id: int | None = None
     hash: str | None = None
-    
+
+    model_config = ConfigDict(extra="forbid")
 
     def to_dict(self) -> dict:
         action = {"type": "text", "label": self.text}
@@ -240,9 +237,6 @@ class InlineKeyboardButton(BaseModel):
                 action["hash"] = self.hash
 
         return {"action": action}
-    
-    class Config:
-        extra = "forbid"
 
 
 class ReplyKeyboardMarkup(BaseModel):
@@ -309,10 +303,10 @@ class CallbackQuery(BaseModel):
     _message: Message | None = None
     _from_user: User | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    @validator('payload', pre=True)
+    @field_validator('payload', mode='before')
+    @classmethod
     def parse_payload(cls, v):
         if isinstance(v, str):
             try:
@@ -321,13 +315,11 @@ class CallbackQuery(BaseModel):
                 return {"data": v}
         return v
 
-    @validator('data', always=True)
-    def extract_data_from_payload(cls, v, values):
-        if v is None and 'payload' in values:
-            payload = values['payload']
-            if isinstance(payload, dict):
-                return payload.get('data')
-        return v
+    @model_validator(mode='after')
+    def extract_data_from_payload(self):
+        if self.data is None and self.payload is not None and isinstance(self.payload, dict):
+            self.data = self.payload.get('data')
+        return self
 
     @property
     def message(self) -> Message | None:
@@ -345,20 +337,19 @@ class Update(BaseModel):
     Supports lazy parsing of message and callback_query.
     """
 
-    update_id: int
+    update_id: int = 0
     type: str
     object: dict
     _message: Message | None = None
     _callback_query: CallbackQuery | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
-        extra = "allow"
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-    @validator('type')
+    @field_validator('type')
+    @classmethod
     def validate_type(cls, v):
         valid_types = {
-            'message_new', 'message_reply', 'message_edit', 'message_event',
+            'message_new', 'message_read', 'message_typing_state', 'message_reply', 'message_edit', 'message_event',
             'message_allow', 'message_deny', 'photo_new', 'audio_new',
             'video_new', 'wall_post_new', 'wall_repost', 'group_join',
             'group_leave', 'user_online', 'user_offline'
@@ -369,10 +360,10 @@ class Update(BaseModel):
 
     @property
     def message(self) -> Message | None:
-        if self.type == "message_new" and not self._message:
+        if self.type == "message_new" and self._message is None:
             message_data = self.object.get("message", {})
             if message_data:
-                    self._message = Message(**message_data)
+                self._message = Message(**message_data)
         return self._message
 
     @property

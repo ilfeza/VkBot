@@ -5,172 +5,15 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, BinaryIO
 
-import httpx
-
 from vk_bot.exception import VKAPIError
+from vk_bot.http_client import HttpClient
 from vk_bot.types import Update
 
 API_URL = "https://api.vk.com/method/"
 API_VERSION = "5.131"
-USER_AGENT = "VK Bot Python/0.1"
-TIMEOUT = 30
-LONG_POLL_TIMEOUT = 25
-
-_proxy: str | None = None
-_session: httpx.Client | None = None
 
 
-def get_session() -> httpx.Client:
-    global _session
-    if _session is None:
-        transport = httpx.HTTPTransport(retries=3)
-        _session = httpx.Client(
-            headers={"User-Agent": USER_AGENT},
-            transport=transport,
-            proxy=_proxy,
-        )
-
-    return _session
-
-
-def set_proxy(proxy: str | None):
-    global _proxy, _session
-    _proxy = proxy
-    if _session is not None:
-        _session.close()
-    _session = None
-
-
-def _make_request(
-    token: str,
-    method: str,
-    params: dict[str, Any] | None = None,
-    files: dict[str, Any] | None = None,
-    http_method: str = "GET",
-) -> dict:
-    session = get_session()
-
-    url = API_URL + method
-    request_params = params.copy() if params else {}
-    request_params.update({"access_token": token, "v": API_VERSION})
-
-    try:
-        if http_method.upper() == "GET":
-            response = session.get(url, params=request_params, timeout=TIMEOUT)
-        elif files:
-            response = session.post(
-                url, params=request_params, files=files, timeout=TIMEOUT * 2
-            )
-        else:
-            response = session.post(url, data=request_params, timeout=TIMEOUT)
-
-        response.raise_for_status()
-        data = response.json()
-
-        if "error" in data:
-            error = data["error"]
-            raise VKAPIError(
-                error_code=error.get("error_code", 0),
-                error_msg=error.get("error_msg", "Unknown error"),
-                request_params=request_params,
-            )
-
-        return data.get("response", {})
-
-    except httpx.HTTPError as e:
-        raise ConnectionError(f"Network error: {e}") from e
-    except json.JSONDecodeError as e:
-        raise ConnectionError(f"Invalid JSON response: {e}") from e
-
-
-def get_me(token: str) -> dict:
-    result = _make_request(token, "users.get")
-    return result[0] if result else {}
-
-
-def send_message(
-    token: str,
-    chat_id: int,
-    text: str,
-    reply_markup: dict | None = None,
-    reply_to: int | None = None,
-    **kwargs,
-) -> dict:
-    params = {
-        "peer_id": chat_id,
-        "message": text,
-        "random_id": int(time.time() * 1000),
-        **kwargs,
-    }
-
-    if reply_markup and isinstance(reply_markup, dict):
-        params["keyboard"] = json.dumps(reply_markup)
-
-    if reply_to:
-        params["reply_to"] = reply_to
-
-    return _make_request(token, "messages.send", params)
-
-
-def reply_to_message(token: str, message: dict, text: str, **kwargs) -> dict:
-    chat_id = message.get("peer_id") or message.get("user_id")
-    reply_to = message.get("id")
-    return send_message(token, chat_id, text, reply_to=reply_to, **kwargs)
-
-
-def send_photo(
-    token: str,
-    chat_id: int,
-    photo: str | bytes | BinaryIO,
-    caption: str | None = None,
-    **kwargs,
-) -> dict:
-    upload_server = get_messages_upload_server(token, peer_id=chat_id)
-    uploaded = upload_photo_to_server(token, upload_server["upload_url"], photo)
-    saved_photos = save_uploaded_photo(
-        token, uploaded["photo"], uploaded["server"], uploaded["hash"]
-    )
-
-    if not saved_photos:
-        raise ValueError("Failed to save photo")
-
-    photo_info = saved_photos[0]
-    attachment = f"photo{photo_info['owner_id']}_{photo_info['id']}"
-
-    params = {
-        "peer_id": chat_id,
-        "attachment": attachment,
-        "random_id": int(time.time() * 1000),
-        **kwargs,
-    }
-
-    if caption:
-        params["message"] = caption
-
-    return _make_request(token, "messages.send", params)
-
-
-def get_docs_upload_server(token: str, peer_id: int | None = None) -> dict:
-    params = {}
-    if peer_id:
-        params["peer_id"] = peer_id
-    return _make_request(token, "docs.getMessagesUploadServer", params)
-
-
-def get_messages_upload_server(token: str, peer_id: int | None = None) -> dict:
-    """Get upload server URL for photos.
-
-    Args:
-        token: VK API token.
-        peer_id: Peer ID (required for sending to group chats).
-    """
-    params: dict[str, Any] = {}
-    if peer_id:
-        params["peer_id"] = peer_id
-    return _make_request(token, "photos.getMessagesUploadServer", params)
-
-
-def _to_bytes_io(data: str | bytes | BinaryIO, name: str = "picture.jpg") -> BytesIO:
+def _to_bytes_io(data: str | bytes | BinaryIO, name: str) -> BytesIO:
     if isinstance(data, str):
         bytes_io = BytesIO(pathlib.Path(data).read_bytes())
     elif isinstance(data, bytes):
@@ -184,71 +27,6 @@ def _to_bytes_io(data: str | bytes | BinaryIO, name: str = "picture.jpg") -> Byt
     return bytes_io
 
 
-def upload_photo_to_server(
-    token: str, upload_url: str, photo: str | bytes | BinaryIO
-) -> dict:
-    session = get_session()
-    file = _to_bytes_io(photo, "photo.jpg")
-    response = session.post(upload_url, files={"photo": file}, timeout=TIMEOUT * 2)
-    response.raise_for_status()
-    return response.json()
-
-
-def save_uploaded_photo(token: str, photo: str, server: int, hash: str) -> list:
-    params = {"photo": photo, "server": server, "hash": hash}
-    return _make_request(token, "photos.saveMessagesPhoto", params)
-
-
-def send_document(
-    token: str,
-    chat_id: int,
-    document: str | bytes | BinaryIO,
-    title: str | None = None,
-    caption: str | None = None,
-    **kwargs,
-) -> dict:
-    upload_server = get_docs_upload_server(token, peer_id=chat_id)
-    uploaded = upload_document_to_server(token, upload_server["upload_url"], document)
-    saved_docs = save_uploaded_document(token, uploaded["file"], title=title)
-
-    if not saved_docs:
-        raise ValueError("Failed to save document")
-
-    doc_info = saved_docs["doc"]
-    attachment = f"doc{doc_info['owner_id']}_{doc_info['id']}"
-
-    params = {
-        "peer_id": chat_id,
-        "attachment": attachment,
-        "random_id": int(time.time() * 1000),
-        **kwargs,
-    }
-
-    if caption:
-        params["message"] = caption
-
-    return _make_request(token, "messages.send", params)
-
-
-def upload_document_to_server(
-    token: str, upload_url: str, document: str | bytes | BinaryIO
-) -> dict:
-    session = get_session()
-    file = _to_bytes_io(document, "document.dat")
-    response = session.post(upload_url, files={"file": file}, timeout=TIMEOUT * 2)
-    response.raise_for_status()
-    return response.json()
-
-
-def save_uploaded_document(
-    token: str, file_data: str, title: str | None = None
-) -> list:
-    params = {"file": file_data}
-    if title:
-        params["title"] = title
-    return _make_request(token, "docs.save", params)
-
-
 @dataclass
 class LongPollServer:
     server: str
@@ -257,40 +35,220 @@ class LongPollServer:
     pts: int | None = None
 
 
-def get_group_id(token: str) -> int:
-    result = _make_request(token, "groups.getById")
-    groups = result if isinstance(result, list) else result.get("groups", [])
-    if not groups:
-        raise ValueError(
-            "Unable to get group_id. Check that the token is a community token."
+class ApiClient:
+    """VK API client. Does not depend on HTTP transport."""
+
+    def __init__(self, token: str, http: HttpClient) -> None:
+        self.token = token
+        self.http = http
+
+    def close(self) -> None:
+        self.http.close()
+
+    def __enter__(self) -> "ApiClient":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    def _make_request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
+        http_method: str = "GET",
+    ) -> dict:
+        url = API_URL + method
+        request_params = params.copy() if params else {}
+        request_params.update(
+            {"access_token": self.token, "v": API_VERSION}
         )
-    return groups[0]["id"]
 
+        if http_method.upper() == "GET":
+            data = self.http.get(url, params=request_params)
+        elif files:
+            data = self.http.post(
+                url,
+                params=request_params,
+                files=files,
+                timeout=self.http.timeout * 2,
+            )
+        else:
+            data = self.http.post(url, data=request_params)
 
-def get_long_poll_server(token: str, group_id: int) -> LongPollServer:
-    result = _make_request(token, "groups.getLongPollServer", {"group_id": group_id})
+        if "error" in data:
+            error = data["error"]
+            raise VKAPIError(
+                error_code=error.get("error_code", 0),
+                error_msg=error.get("error_msg", "Unknown error"),
+                request_params=request_params,
+            )
 
-    return LongPollServer(
-        server=result["server"],
-        key=result["key"],
-        ts=result["ts"],
-        pts=result.get("pts"),
-    )
+        return data.get("response", {})
 
+    def get_me(self) -> dict:
+        result = self._make_request("users.get")
+        return result[0] if result else {}
 
-def get_long_poll_updates(
-    server: str, key: str, ts: str, wait: int = LONG_POLL_TIMEOUT
-) -> dict:
-    session = get_session()
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+        reply_to: int | None = None,
+        **kwargs,
+    ) -> dict:
+        params = {
+            "peer_id": chat_id,
+            "message": text,
+            "random_id": int(time.time() * 1000),
+            **kwargs,
+        }
 
-    url = f"{server}?act=a_check&key={key}&ts={ts}&wait={wait}"
+        if reply_markup and isinstance(reply_markup, dict):
+            params["keyboard"] = json.dumps(reply_markup)
 
-    try:
-        response = session.get(url, timeout=wait + 5)
-        response.raise_for_status()
-        return response.json()
-    except httpx.HTTPError as e:
-        raise ConnectionError(f"Long poll error: {e}") from e
+        if reply_to:
+            params["reply_to"] = reply_to
+
+        return self._make_request("messages.send", params)
+
+    def reply_to_message(self, message: dict, text: str, **kwargs) -> dict:
+        chat_id = message.get("peer_id") or message.get("user_id")
+        reply_to = message.get("id")
+        return self.send_message(chat_id, text, reply_to=reply_to, **kwargs)
+
+    def send_photo(
+        self,
+        chat_id: int,
+        photo: str | bytes | BinaryIO,
+        caption: str | None = None,
+        **kwargs,
+    ) -> dict:
+        upload_server = self.get_messages_upload_server(peer_id=chat_id)
+        uploaded = self.upload_photo_to_server(upload_server["upload_url"], photo)
+        saved_photos = self.save_uploaded_photo(
+            uploaded["photo"], uploaded["server"], uploaded["hash"]
+        )
+
+        if not saved_photos:
+            raise ValueError("Failed to save photo")
+
+        photo_info = saved_photos[0]
+        attachment = f"photo{photo_info['owner_id']}_{photo_info['id']}"
+
+        params = {
+            "peer_id": chat_id,
+            "attachment": attachment,
+            "random_id": int(time.time() * 1000),
+            **kwargs,
+        }
+
+        if caption:
+            params["message"] = caption
+
+        return self._make_request("messages.send", params)
+
+    def get_messages_upload_server(self, peer_id: int | None = None) -> dict:
+        params: dict[str, Any] = {}
+        if peer_id:
+            params["peer_id"] = peer_id
+        return self._make_request("photos.getMessagesUploadServer", params)
+
+    def upload_photo_to_server(
+        self, upload_url: str, photo: str | bytes | BinaryIO
+    ) -> dict:
+        file = _to_bytes_io(photo, "photo.jpg")
+        return self.http.post(
+            upload_url, files={"photo": file}, timeout=self.http.timeout * 2
+        )
+
+    def save_uploaded_photo(self, photo: str, server: int, hash: str) -> list:
+        params = {"photo": photo, "server": server, "hash": hash}
+        return self._make_request("photos.saveMessagesPhoto", params)
+
+    def send_document(
+        self,
+        chat_id: int,
+        document: str | bytes | BinaryIO,
+        title: str | None = None,
+        caption: str | None = None,
+        **kwargs,
+    ) -> dict:
+        upload_server = self.get_docs_upload_server(peer_id=chat_id)
+        uploaded = self.upload_document_to_server(
+            upload_server["upload_url"], document
+        )
+        saved_docs = self.save_uploaded_document(uploaded["file"], title=title)
+
+        if not saved_docs:
+            raise ValueError("Failed to save document")
+
+        doc_info = saved_docs["doc"]
+        attachment = f"doc{doc_info['owner_id']}_{doc_info['id']}"
+
+        params = {
+            "peer_id": chat_id,
+            "attachment": attachment,
+            "random_id": int(time.time() * 1000),
+            **kwargs,
+        }
+
+        if caption:
+            params["message"] = caption
+
+        return self._make_request("messages.send", params)
+
+    def get_docs_upload_server(self, peer_id: int | None = None) -> dict:
+        params = {}
+        if peer_id:
+            params["peer_id"] = peer_id
+        return self._make_request("docs.getMessagesUploadServer", params)
+
+    def upload_document_to_server(
+        self, upload_url: str, document: str | bytes | BinaryIO
+    ) -> dict:
+        file = _to_bytes_io(document, "document.dat")
+        return self.http.post(
+            upload_url, files={"file": file}, timeout=self.http.timeout * 2
+        )
+
+    def save_uploaded_document(
+        self, file_data: str, title: str | None = None
+    ) -> list:
+        params = {"file": file_data}
+        if title:
+            params["title"] = title
+        return self._make_request("docs.save", params)
+
+    def get_group_id(self) -> int:
+        result = self._make_request("groups.getById")
+        groups = result if isinstance(result, list) else result.get("groups", [])
+        if not groups:
+            raise ValueError(
+                "Unable to get group_id. Check that the token is a community token."
+            )
+        return groups[0]["id"]
+
+    def get_long_poll_server(self, group_id: int) -> LongPollServer:
+        result = self._make_request(
+            "groups.getLongPollServer", {"group_id": group_id}
+        )
+        return LongPollServer(
+            server=result["server"],
+            key=result["key"],
+            ts=result["ts"],
+            pts=result.get("pts"),
+        )
+
+    def get_long_poll_updates(
+        self, server: str, key: str, ts: str, wait: int | None = None
+    ) -> dict:
+        if wait is None:
+            wait = self.http.long_poll_timeout
+
+        url = f"{server}?act=a_check&key={key}&ts={ts}&wait={wait}"
+        return self.http.get(url, timeout=wait + 5)
 
 
 def parse_update(update_data: list) -> dict | None:

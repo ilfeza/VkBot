@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from vk_bot import VKBot, apihelper
+from vk_bot import VKBot
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def callback_update_factory() -> Callable[..., dict[str, Any]]:
 
 
 @pytest.fixture
-def mock_api_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def mock_api_calls(bot, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     calls = {}
 
     def fake_make_request(*args, **kwargs):
@@ -73,8 +73,8 @@ def mock_api_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         calls["send_document"] = {"args": args, "kwargs": kwargs}
         return {"ok": True}
 
-    monkeypatch.setattr(apihelper, "_make_request", fake_make_request)
-    monkeypatch.setattr(apihelper, "send_photo", fake_send_photo)
-    monkeypatch.setattr(apihelper, "send_document", fake_send_document)
+    monkeypatch.setattr(bot.api, "_make_request", fake_make_request)
+    monkeypatch.setattr(bot.api, "send_photo", fake_send_photo)
+    monkeypatch.setattr(bot.api, "send_document", fake_send_document)
 
     return calls
