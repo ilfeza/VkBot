@@ -1,16 +1,19 @@
 __version__ = "0.2.0"
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, BinaryIO
+
+from dishka import make_container
 
 from vk_bot import apihelper, exception, types, util
 from vk_bot.apihelper import ApiClient
 from vk_bot.config import HttpConfig, Token
+from vk_bot.di import VkBotProvider
 from vk_bot.handlers import CallbackQueryHandler, MessageHandler, MiddlewareHandler
-from vk_bot.http_client import HttpClient
 from vk_bot.state.context import StateContext
 from vk_bot.state.fsm import FSMRegistry, VKBotFSM
 from vk_bot.state.group import StatesGroup
@@ -22,30 +25,38 @@ from vk_bot.state.storage import (
     RedisStorage,
 )
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("transitions").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
+
 
 class VKBot:
     """Main bot class for VK API interaction.
 
     Provides an interface for sending messages, handling Long Poll
-    events, and managing user states (FSM).
+    events, and managing user states (FSM). Uses dishka DI container
+    internally to manage HttpClient and ApiClient lifecycle.
 
     Args:
         token: VK community token.
         group_id: Community ID. Resolved automatically if not provided.
-        state_storage: State storage backend (defaults to MemoryStorage).
+        state_storage: State storage backend (MemoryStorage, RedisStorage, PostgresStorage). Defaults to MemoryStorage.
         http_config: HTTP transport configuration (proxy, timeouts, retries).
     """
 
     def __init__(
         self,
-        token: str | None = None,
+        token: str,
         group_id: int | None = None,
         state_storage: BaseStorage | None = None,
         http_config: HttpConfig | None = None,
     ):
-        if not token:
-            raise ValueError("token must be provided")
-        self.api = ApiClient(token=Token(token), http=HttpClient(http_config))
+        self._container = make_container(
+            VkBotProvider(),
+            context={Token: Token(token), HttpConfig: http_config or HttpConfig()},
+        )
+        self.api = self._container.get(ApiClient)
 
         self._group_id = group_id
         self._me: types.User | None = None
@@ -76,16 +87,16 @@ class VKBot:
     def get_state(self, user_id: int) -> str | None:
         return self.state_manager.get_state(user_id)
 
-    def set_state(self, user_id: int, state: str):
+    def set_state(self, user_id: int, state: str) -> None:
         self.state_manager.set_state(user_id, state)
 
     def get_state_data(self, user_id: int) -> dict[str, Any]:
         return self.state_manager.get_data(user_id)
 
-    def update_state_data(self, user_id: int, **kwargs):
+    def update_state_data(self, user_id: int, **kwargs: Any) -> None:
         self.state_manager.update_data(user_id, **kwargs)
 
-    def reset_state(self, user_id: int):
+    def reset_state(self, user_id: int) -> None:
         self.state_manager.reset(user_id)
 
     def _get_state_context(self, user_id: int) -> StateContext:
@@ -95,11 +106,11 @@ class VKBot:
         self,
         commands: list[str] | None = None,
         regexp: str | None = None,
-        func: Callable | None = None,
+        func: Callable[..., Any] | None = None,
         content_types: list[str] | None = None,
         chat_types: list[str] | None = None,
         state: str | list[str] | None = None,
-    ):
+    ) -> Callable[..., Any]:
         """Decorator for registering incoming message handlers.
 
         Args:
@@ -111,7 +122,7 @@ class VKBot:
             state: FSM state(s) that trigger this handler.
         """
 
-        def decorator(handler):
+        def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
             handler_obj = MessageHandler(
                 callback=handler,
                 commands=commands,
@@ -128,10 +139,10 @@ class VKBot:
 
     def callback_query_handler(
         self,
-        func: Callable | None = None,
-        data: str | re.Pattern | None = None,
+        func: Callable[..., Any] | None = None,
+        data: str | re.Pattern[str] | None = None,
         state: str | list[str] | None = None,
-    ):
+    ) -> Callable[..., Any]:
         """Decorator for handling callback events (inline button presses).
 
         Handles ``message_event`` type events from VK API.
@@ -142,7 +153,7 @@ class VKBot:
             state: FSM state(s) that trigger this handler.
         """
 
-        def decorator(handler):
+        def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
             handler_obj = CallbackQueryHandler(
                 callback=handler, func=func, data=data, state=state
             )
@@ -151,7 +162,9 @@ class VKBot:
 
         return decorator
 
-    def middleware_handler(self, update_types: list[str] | None = None):
+    def middleware_handler(
+        self, update_types: list[str] | None = None
+    ) -> Callable[..., Any]:
         """Decorator for registering middleware.
 
         Middleware is called before handlers. If it returns False,
@@ -161,7 +174,7 @@ class VKBot:
             update_types: Event types to filter (None = all).
         """
 
-        def decorator(handler):
+        def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
             handler_obj = MiddlewareHandler(callback=handler, update_types=update_types)
             self.middleware_handlers.append(handler_obj)
             return handler
@@ -176,8 +189,8 @@ class VKBot:
         | types.InlineKeyboardMarkup
         | None = None,
         reply_to: int | None = None,
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Send a text message to a user or chat.
 
         Uses VK API method ``messages.send``.
@@ -201,20 +214,22 @@ class VKBot:
             **kwargs,
         )
 
-    def reply_to(self, message: types.Message, text: str, **kwargs) -> dict:
+    def reply_to(
+        self, message: types.Message, text: str, **kwargs: Any
+    ) -> dict[str, Any]:
         """Reply to a message (automatically uses chat_id and reply_to)."""
         return self.send_message(message.chat.id, text, reply_to=message.id, **kwargs)
 
     def send_photo(
         self,
         chat_id: int,
-        photo: str | bytes | object,
+        photo: str | bytes | BinaryIO,
         caption: str | None = None,
         reply_markup: types.ReplyKeyboardMarkup
         | types.InlineKeyboardMarkup
         | None = None,
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Send a photo.
 
         Uploads via ``photos.getMessagesUploadServer`` and sends.
@@ -237,13 +252,13 @@ class VKBot:
     def send_document(
         self,
         chat_id: int,
-        document: str | bytes | object,
+        document: str | bytes | BinaryIO,
         caption: str | None = None,
         reply_markup: types.ReplyKeyboardMarkup
         | types.InlineKeyboardMarkup
         | None = None,
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Send a document.
 
         Uploads via ``docs.getMessagesUploadServer`` and sends.
@@ -270,23 +285,30 @@ class VKBot:
         peer_id: int,
         event_data: dict[str, Any] | None = None,
         text: str | None = None,
-    ) -> dict:
-        params = {
-            "event_id": callback_query_id,
-            "user_id": user_id,
-            "peer_id": peer_id,
-        }
+    ) -> dict[str, Any]:
+        """Send a response to a callback button press.
 
+        Args:
+            callback_query_id: Callback event ID.
+            user_id: User who pressed the button.
+            peer_id: Peer where the button was pressed.
+            event_data: Event data dict (serialised to JSON automatically).
+            text: Shortcut — show a snackbar with this text.
+        """
+        serialized: str | None = None
         if event_data is not None:
-            params["event_data"] = json.dumps(event_data)
+            serialized = json.dumps(event_data)
         elif text:
-            params["event_data"] = json.dumps({"type": "show_snackbar", "text": text})
+            serialized = json.dumps({"type": "show_snackbar", "text": text})
 
-        return self.api._make_request(
-            "messages.sendMessageEventAnswer", params
+        return self.api.answer_callback_query(
+            event_id=callback_query_id,
+            user_id=user_id,
+            peer_id=peer_id,
+            event_data=serialized,
         )
 
-    def polling(self, non_stop: bool = True, interval: int = 1):
+    def polling(self, non_stop: bool = True, interval: int = 1) -> None:
         """Start Long Poll server polling.
 
         Uses Bots Long Poll API to receive events.
@@ -300,9 +322,7 @@ class VKBot:
         while self._polling:
             try:
                 if not self.lp_server:
-                    self.lp_server = self.api.get_long_poll_server(
-                        self.group_id
-                    )
+                    self.lp_server = self.api.get_long_poll_server(self.group_id)
 
                 raw_updates = self.api.get_long_poll_updates(
                     self.lp_server.server, self.lp_server.key, self.lp_server.ts
@@ -310,8 +330,8 @@ class VKBot:
 
                 parsed_updates = apihelper.process_updates(raw_updates)
 
-                for update_data in parsed_updates:
-                    self._process_update(update_data)
+                for update in parsed_updates:
+                    self._process_update(update)
 
                 if "ts" in raw_updates:
                     self.lp_server.ts = raw_updates["ts"]
@@ -322,28 +342,13 @@ class VKBot:
                     raise
                 time.sleep(interval)
 
-            except Exception as e:
-                print(f"Polling error: {e}")
+            except Exception:
+                logger.exception("Polling error")
                 if not non_stop:
                     raise
                 time.sleep(interval)
 
-    def get_fsm(self, user_id: int, fsm_name: str = "default") -> VKBotFSM:
-        state = self.get_state(user_id)
-        fsm = FSMRegistry.get_or_create(fsm_name)
-        fsm.current_state = state
-        return fsm
-
-    def set_fsm_state(self, user_id: int, state: str, fsm_name: str = "default"):
-        fsm = self.get_fsm(user_id, fsm_name)
-        fsm.transition(fsm.current_state, state, None)
-        self.set_state(user_id, state)
-
-    def _process_update(self, update_data: dict):
-        update = types.Update(
-            **update_data
-        )
-
+    def _process_update(self, update: types.Update) -> None:
         for middleware in self.middleware_handlers:
             if middleware.check(update):
                 result = middleware.process(self, update)
@@ -376,14 +381,16 @@ class VKBot:
                         handler.callback(update.callback_query)
                     break
 
-    def stop_polling(self):
+    def stop_polling(self) -> None:
         self._polling = False
+
+    def close(self) -> None:
+        """Close the DI container and release resources."""
+        if hasattr(self, "_container"):
+            self._container.close()
 
 
 __all__ = [
-    "ApiClient",
-    "FSMRegistry",
-    "HttpConfig",
     "MemoryStorage",
     "PostgresStorage",
     "RedisStorage",
@@ -392,7 +399,4 @@ __all__ = [
     "StatesGroup",
     "VKBot",
     "VKBotFSM",
-    "exception",
-    "types",
-    "util",
 ]

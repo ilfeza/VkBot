@@ -20,14 +20,21 @@ pip install vk-bot
 
 ## Example
 
-Showcase how your project can be used:
-
 ```python
-from vk_bot.example import some_function
+from vk_bot import VKBot
 
-print(some_function(3, 4))
-# => 7
+bot = VKBot("GROUP_TOKEN")
+
+
+@bot.message_handler()
+def send_echo(message):
+    bot.send_message(message.from_id, message.text)
+
+
+bot.polling()
 ```
+
+See more in the [examples/](examples/) directory.
 
 ## License
 

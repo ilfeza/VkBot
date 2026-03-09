@@ -1,7 +1,36 @@
 import json
+import logging
+import re
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
+
+
+def build_attachment_string(
+    owner_id: int, media_id: int, access_key: str | None = None
+) -> str:
+    """Build a VK attachment string like ``photo-123_456`` or ``photo-123_456_key``."""
+    base = f"{owner_id}_{media_id}"
+    if access_key:
+        base += f"_{access_key}"
+    return base
+
+
+def parse_attachment_string(
+    attachment: str,
+) -> tuple[str | None, int | None, int | None, str | None]:
+    """Parse a VK attachment string (e.g. ``photo123_456_key``).
+
+    Returns:
+        Tuple of ``(type, owner_id, media_id, access_key)``.
+    """
+    match = re.match(r"^(photo|video|doc|audio)(-?\d+)_(\d+)(?:_(.*))?$", attachment)
+    if not match:
+        return None, None, None, None
+    return match.group(1), int(match.group(2)), int(match.group(3)), match.group(4)
 
 
 class User(BaseModel):
@@ -44,7 +73,7 @@ class Photo(BaseModel):
     id: int
     owner_id: int
     access_key: str | None = None
-    sizes: list[dict] = Field(default_factory=list)
+    sizes: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def attachment(self) -> str:
@@ -58,7 +87,8 @@ class Photo(BaseModel):
         if not self.sizes:
             return None
         max_size = max(self.sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
-        return max_size.get("url")
+        result: str | None = max_size.get("url")
+        return result
 
 
 class Document(BaseModel):
@@ -121,11 +151,11 @@ class Message(BaseModel):
     out: bool = False
     important: bool = False
     deleted: bool = False
-    attachments: list[dict] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
     reply_message: "Message | None" = None
     fwd_messages: list["Message"] = Field(default_factory=list)
-    payload: dict | None = None
-    action: dict | None = None
+    payload: dict[str, Any] | None = None
+    action: dict[str, Any] | None = None
     _from_user: User | None = None
     _chat: Chat | None = None
 
@@ -143,12 +173,14 @@ class Message(BaseModel):
 
     @property
     def content_type(self) -> str:
+        if self.attachments:
+            result: str = self.attachments[0].get("type", "unknown")
+            return result
+        if self.action:
+            action_type = self.action.get("type", "unknown")
+            return f"action_{action_type}"
         if self.text:
             return "text"
-        if self.attachments:
-            return self.attachments[0].get("type", "unknown")
-        if self.action:
-            return f"action_{self.action.get('type')}"
         return "unknown"
 
     @property
@@ -197,14 +229,8 @@ class KeyboardButton(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    def to_dict(self) -> dict:
-        return {
-            "action": {
-                "type": "text",
-                "label": self.text
-            },
-            "color": self.color
-        }
+    def to_dict(self) -> dict[str, Any]:
+        return {"action": {"type": "text", "label": self.text}, "color": self.color}
 
 
 class InlineKeyboardButton(BaseModel):
@@ -219,7 +245,7 @@ class InlineKeyboardButton(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         action = {"type": "text", "label": self.text}
 
         if self.callback_data:
@@ -248,16 +274,16 @@ class ReplyKeyboardMarkup(BaseModel):
     keyboard: list[list[KeyboardButton]] = Field(default_factory=list)
     one_time_keyboard: bool = False
 
-    def add(self, *buttons: KeyboardButton):
+    def add(self, *buttons: KeyboardButton) -> "ReplyKeyboardMarkup":
         row = list(buttons)
         if row:
             self.keyboard.append(row)
         return self
 
-    def row(self, *buttons: KeyboardButton):
+    def row(self, *buttons: KeyboardButton) -> "ReplyKeyboardMarkup":
         return self.add(*buttons)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "buttons": [[btn.to_dict() for btn in row] for row in self.keyboard],
             "one_time": self.one_time_keyboard,
@@ -272,16 +298,16 @@ class InlineKeyboardMarkup(BaseModel):
 
     keyboard: list[list[InlineKeyboardButton]] = Field(default_factory=list)
 
-    def add(self, *buttons: InlineKeyboardButton):
+    def add(self, *buttons: InlineKeyboardButton) -> "InlineKeyboardMarkup":
         row = list(buttons)
         if row:
             self.keyboard.append(row)
         return self
 
-    def row(self, *buttons: InlineKeyboardButton):
+    def row(self, *buttons: InlineKeyboardButton) -> "InlineKeyboardMarkup":
         return self.add(*buttons)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "buttons": [[btn.to_dict() for btn in row] for row in self.keyboard],
             "inline": True,
@@ -298,16 +324,16 @@ class CallbackQuery(BaseModel):
     from_id: int
     peer_id: int
     message_id: int
-    payload: dict | None = None
+    payload: dict[str, Any] | None = None
     data: str | None = None
     _message: Message | None = None
     _from_user: User | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    @field_validator('payload', mode='before')
+    @field_validator("payload", mode="before")
     @classmethod
-    def parse_payload(cls, v):
+    def parse_payload(cls, v: Any) -> Any:
         if isinstance(v, str):
             try:
                 return json.loads(v)
@@ -315,10 +341,14 @@ class CallbackQuery(BaseModel):
                 return {"data": v}
         return v
 
-    @model_validator(mode='after')
-    def extract_data_from_payload(self):
-        if self.data is None and self.payload is not None and isinstance(self.payload, dict):
-            self.data = self.payload.get('data')
+    @model_validator(mode="after")
+    def extract_data_from_payload(self) -> "CallbackQuery":
+        if (
+            self.data is None
+            and self.payload is not None
+            and isinstance(self.payload, dict)
+        ):
+            self.data = self.payload.get("data")
         return self
 
     @property
@@ -339,23 +369,36 @@ class Update(BaseModel):
 
     update_id: int = 0
     type: str
-    object: dict
+    object: dict[str, Any]
     _message: Message | None = None
     _callback_query: CallbackQuery | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-    @field_validator('type')
+    @field_validator("type")
     @classmethod
-    def validate_type(cls, v):
+    def validate_type(cls, v: str) -> str:
         valid_types = {
-            'message_new', 'message_read', 'message_typing_state', 'message_reply', 'message_edit', 'message_event',
-            'message_allow', 'message_deny', 'photo_new', 'audio_new',
-            'video_new', 'wall_post_new', 'wall_repost', 'group_join',
-            'group_leave', 'user_online', 'user_offline'
+            "message_new",
+            "message_read",
+            "message_typing_state",
+            "message_reply",
+            "message_edit",
+            "message_event",
+            "message_allow",
+            "message_deny",
+            "photo_new",
+            "audio_new",
+            "video_new",
+            "wall_post_new",
+            "wall_repost",
+            "group_join",
+            "group_leave",
+            "user_online",
+            "user_offline",
         }
         if v not in valid_types:
-            print(f"Info: Unknown update type: {v}")
+            logger.info("Unknown update type: %s", v)
         return v
 
     @property

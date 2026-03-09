@@ -2,13 +2,54 @@ import inspect
 import re
 from collections.abc import Callable
 from re import Pattern
+from typing import TYPE_CHECKING, Any
 
 from vk_bot import types
-from vk_bot.util import extract_command
+
+if TYPE_CHECKING:
+    from vk_bot import VKBot
+
+
+def extract_command(text: str) -> tuple[str | None, str | None]:
+    """Extract command and arguments from message text.
+
+    Args:
+        text: Message text, e.g. ``/start hello``.
+
+    Returns:
+        Tuple of ``(command, args)``, e.g. ``('start', 'hello')``.
+        Both values are ``None`` if the text is not a command.
+    """
+    if not text or not text.startswith("/"):
+        return None, None
+    parts = text[1:].split(" ", 1)
+    return parts[0].lower(), parts[1] if len(parts) > 1 else None
+
+
+def extract_mentions(text: str) -> list[int]:
+    """Extract mentioned user IDs from text.
+
+    Supports ``[id123|Name]`` and ``@id123`` formats.
+    """
+    ids: list[int] = []
+    ids.extend(int(m) for m in re.findall(r"\[id(\d+)\|.*?\]", text))
+    ids.extend(int(m) for m in re.findall(r"@id(\d+)", text))
+    return list(set(ids))
+
+
+def is_group_event(event_type: str) -> bool:
+    """Return True if the event type belongs to the community events group."""
+    return event_type in {
+        "group_join",
+        "group_leave",
+        "group_change_photo",
+        "group_change_settings",
+        "group_officers_edit",
+    }
 
 
 class Handler:
-    def __init__(self, callback: Callable, **filters):
+    def __init__(self, callback: Callable[..., Any], **filters: Any) -> None:
         self.callback = callback
         self.filters = filters
 
@@ -22,15 +63,15 @@ class Handler:
 class MessageHandler(Handler):
     def __init__(
         self,
-        callback: Callable,
+        callback: Callable[..., Any],
         commands: list[str] | None = None,
-        regexp: str | Pattern | None = None,
-        func: Callable | None = None,
+        regexp: str | Pattern[str] | None = None,
+        func: Callable[..., Any] | None = None,
         content_types: list[str] | None = None,
         chat_types: list[str] | None = None,
         state: str | list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(callback, **kwargs)
 
         self.commands = [cmd.lower() for cmd in commands] if commands else None
@@ -82,12 +123,12 @@ class MessageHandler(Handler):
 class CallbackQueryHandler(Handler):
     def __init__(
         self,
-        callback: Callable,
-        func: Callable | None = None,
-        data: str | Pattern | None = None,
+        callback: Callable[..., Any],
+        func: Callable[..., Any] | None = None,
+        data: str | Pattern[str] | None = None,
         state: str | list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(callback, **kwargs)
         self.func = func
         self.data = re.compile(data) if isinstance(data, str) else data
@@ -120,11 +161,11 @@ class CallbackQueryHandler(Handler):
 class ChatMemberHandler(Handler):
     def __init__(
         self,
-        callback: Callable,
-        func: Callable | None = None,
+        callback: Callable[..., Any],
+        func: Callable[..., Any] | None = None,
         event_types: list[str] | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(callback, **kwargs)
         self.func = func
         self.event_types = event_types or [
@@ -144,7 +185,9 @@ class ChatMemberHandler(Handler):
 
 
 class MiddlewareHandler(Handler):
-    def __init__(self, callback: Callable, update_types: list[str] | None = None):
+    def __init__(
+        self, callback: Callable[..., Any], update_types: list[str] | None = None
+    ) -> None:
         super().__init__(callback)
         self.update_types = update_types
 
@@ -153,5 +196,5 @@ class MiddlewareHandler(Handler):
             return False
         return True
 
-    def process(self, bot, update: types.Update):
+    def process(self, bot: "VKBot", update: types.Update) -> Any:
         return self.callback(bot, update)

@@ -1,4 +1,5 @@
 import json
+import logging
 import pathlib
 import time
 from dataclasses import dataclass
@@ -8,6 +9,8 @@ from typing import Any, BinaryIO
 from vk_bot.exception import VKAPIError
 from vk_bot.http_client import HttpClient
 from vk_bot.types import Update
+
+logger = logging.getLogger(__name__)
 
 API_URL = "https://api.vk.com/method/"
 API_VERSION = "5.131"
@@ -57,12 +60,10 @@ class ApiClient:
         params: dict[str, Any] | None = None,
         files: dict[str, Any] | None = None,
         http_method: str = "GET",
-    ) -> dict:
+    ) -> dict[str, Any]:
         url = API_URL + method
         request_params = params.copy() if params else {}
-        request_params.update(
-            {"access_token": self.token, "v": API_VERSION}
-        )
+        request_params.update({"access_token": self.token, "v": API_VERSION})
 
         if http_method.upper() == "GET":
             data = self.http.get(url, params=request_params)
@@ -84,20 +85,21 @@ class ApiClient:
                 request_params=request_params,
             )
 
-        return data.get("response", {})
+        result: dict[str, Any] = data.get("response", {})
+        return result
 
-    def get_me(self) -> dict:
-        result = self._make_request("users.get")
+    def get_me(self) -> dict[str, Any]:
+        result: Any = self._make_request("users.get")
         return result[0] if result else {}
 
     def send_message(
         self,
         chat_id: int,
         text: str,
-        reply_markup: dict | None = None,
+        reply_markup: dict[str, Any] | None = None,
         reply_to: int | None = None,
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         params = {
             "peer_id": chat_id,
             "message": text,
@@ -113,7 +115,9 @@ class ApiClient:
 
         return self._make_request("messages.send", params)
 
-    def reply_to_message(self, message: dict, text: str, **kwargs) -> dict:
+    def reply_to_message(
+        self, message: dict[str, Any], text: str, **kwargs: Any
+    ) -> dict[str, Any]:
         chat_id = message.get("peer_id") or message.get("user_id")
         reply_to = message.get("id")
         return self.send_message(chat_id, text, reply_to=reply_to, **kwargs)
@@ -123,8 +127,8 @@ class ApiClient:
         chat_id: int,
         photo: str | bytes | BinaryIO,
         caption: str | None = None,
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         upload_server = self.get_messages_upload_server(peer_id=chat_id)
         uploaded = self.upload_photo_to_server(upload_server["upload_url"], photo)
         saved_photos = self.save_uploaded_photo(
@@ -149,7 +153,7 @@ class ApiClient:
 
         return self._make_request("messages.send", params)
 
-    def get_messages_upload_server(self, peer_id: int | None = None) -> dict:
+    def get_messages_upload_server(self, peer_id: int | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {}
         if peer_id:
             params["peer_id"] = peer_id
@@ -157,13 +161,15 @@ class ApiClient:
 
     def upload_photo_to_server(
         self, upload_url: str, photo: str | bytes | BinaryIO
-    ) -> dict:
+    ) -> dict[str, Any]:
         file = _to_bytes_io(photo, "photo.jpg")
         return self.http.post(
             upload_url, files={"photo": file}, timeout=self.http.timeout * 2
         )
 
-    def save_uploaded_photo(self, photo: str, server: int, hash: str) -> list:
+    def save_uploaded_photo(
+        self, photo: str, server: int, hash: str
+    ) -> list[dict[str, Any]]:
         params = {"photo": photo, "server": server, "hash": hash}
         return self._make_request("photos.saveMessagesPhoto", params)
 
@@ -173,12 +179,10 @@ class ApiClient:
         document: str | bytes | BinaryIO,
         title: str | None = None,
         caption: str | None = None,
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         upload_server = self.get_docs_upload_server(peer_id=chat_id)
-        uploaded = self.upload_document_to_server(
-            upload_server["upload_url"], document
-        )
+        uploaded = self.upload_document_to_server(upload_server["upload_url"], document)
         saved_docs = self.save_uploaded_document(uploaded["file"], title=title)
 
         if not saved_docs:
@@ -199,15 +203,15 @@ class ApiClient:
 
         return self._make_request("messages.send", params)
 
-    def get_docs_upload_server(self, peer_id: int | None = None) -> dict:
-        params = {}
+    def get_docs_upload_server(self, peer_id: int | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {}
         if peer_id:
             params["peer_id"] = peer_id
         return self._make_request("docs.getMessagesUploadServer", params)
 
     def upload_document_to_server(
         self, upload_url: str, document: str | bytes | BinaryIO
-    ) -> dict:
+    ) -> dict[str, Any]:
         file = _to_bytes_io(document, "document.dat")
         return self.http.post(
             upload_url, files={"file": file}, timeout=self.http.timeout * 2
@@ -215,7 +219,7 @@ class ApiClient:
 
     def save_uploaded_document(
         self, file_data: str, title: str | None = None
-    ) -> list:
+    ) -> list[dict[str, Any]]:
         params = {"file": file_data}
         if title:
             params["title"] = title
@@ -228,12 +232,11 @@ class ApiClient:
             raise ValueError(
                 "Unable to get group_id. Check that the token is a community token."
             )
-        return groups[0]["id"]
+        group_id: int = groups[0]["id"]
+        return group_id
 
     def get_long_poll_server(self, group_id: int) -> LongPollServer:
-        result = self._make_request(
-            "groups.getLongPollServer", {"group_id": group_id}
-        )
+        result = self._make_request("groups.getLongPollServer", {"group_id": group_id})
         return LongPollServer(
             server=result["server"],
             key=result["key"],
@@ -243,85 +246,58 @@ class ApiClient:
 
     def get_long_poll_updates(
         self, server: str, key: str, ts: str, wait: int | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         if wait is None:
             wait = self.http.long_poll_timeout
 
         url = f"{server}?act=a_check&key={key}&ts={ts}&wait={wait}"
         return self.http.get(url, timeout=wait + 5)
 
+    def answer_callback_query(
+        self,
+        event_id: str,
+        user_id: int,
+        peer_id: int,
+        event_data: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a response to a callback button press.
 
-def parse_update(update_data: list) -> dict | None:
-    if not update_data:
-        return None
+        Uses VK API method ``messages.sendMessageEventAnswer``.
 
-    event_type = update_data[0]
-
-    if event_type == 4:
-        return {
-            "type": "message_new",
-            "object": {
-                "id": update_data[1],
-                "flags": update_data[2],
-                "peer_id": update_data[3],
-                "timestamp": update_data[4],
-                "text": update_data[5] if len(update_data) > 5 else "",
-                "attachments": update_data[6] if len(update_data) > 6 else [],
-            },
+        Args:
+            event_id: Callback event ID.
+            user_id: User who pressed the button.
+            peer_id: Peer where the button was pressed.
+            event_data: JSON-encoded event data (snackbar, link, etc.).
+        """
+        params: dict[str, Any] = {
+            "event_id": event_id,
+            "user_id": user_id,
+            "peer_id": peer_id,
         }
-    if event_type == 8:
-        return {
-            "type": "user_online",
-            "object": {"user_id": update_data[1], "timestamp": update_data[2]},
-        }
-
-    return None
+        if event_data is not None:
+            params["event_data"] = event_data
+        return self._make_request("messages.sendMessageEventAnswer", params)
 
 
-def process_updates(raw_updates: dict) -> list[Update]:
-    """Extract updates from Bots Long Poll response.
+def process_updates(raw_updates: dict[str, Any]) -> list[Update]:
+    """Extract and validate updates from Bots Long Poll API response.
 
-    Returns events as-is since Bots Long Poll API returns
-    ready-to-use JSON objects with type and object fields.
+    Bots Long Poll API returns events as JSON objects with
+    ``type``, ``object``, ``group_id`` and ``event_id`` fields.
+    Each update is validated through the :class:`~vk_bot.types.Update` model.
+
+    Args:
+        raw_updates: Raw JSON response from Long Poll server.
+
+    Returns:
+        List of validated :class:`~vk_bot.types.Update` objects.
     """
     updates_data = raw_updates.get("updates", [])
-    updates = []
+    updates: list[Update] = []
     for update_data in updates_data:
         try:
-            update = Update(**update_data)
-            updates.append(update)
+            updates.append(Update(**update_data))
         except Exception as e:
-            print(f"Error parsing update: {e}")
-    return raw_updates.get("updates", [])
-
-
-def create_keyboard(buttons: list[list[dict]], one_time: bool = False) -> dict:
-    return {"buttons": buttons, "one_time": one_time}
-
-
-def create_inline_keyboard(buttons: list[list[dict]]) -> dict:
-    return {"inline": True, "buttons": buttons}
-
-
-def extract_attachment_id(attachment: str) -> tuple[int | None, int | None]:
-    if "_" not in attachment:
-        return None, None
-
-    type_part, id_part = attachment.split("_", 1)
-    import re
-
-    match = re.search(r"\d+$", type_part)
-    owner_id = int(match.group()) if match else int(type_part)
-
-    media_id = int(id_part.split("_")[0])
-    return owner_id, media_id
-
-
-def is_group_chat(peer_id: int) -> bool:
-    return peer_id > 2000000000
-
-
-def get_user_id_from_peer(peer_id: int) -> int:
-    if is_group_chat(peer_id):
-        return peer_id - 2000000000
-    return peer_id
+            logger.warning("Error parsing update: %s", e)
+    return updates

@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from vk_bot import VKBot
+from vk_bot import VKBot, types
 
 
 @pytest.fixture
@@ -12,14 +12,14 @@ def bot() -> VKBot:
 
 
 @pytest.fixture
-def message_update_factory() -> Callable[..., dict[str, Any]]:
+def message_update_factory() -> Callable[..., types.Update]:
     def _factory(
         text: str = "hello",
         user_id: int = 111222333,
         peer_id: int | None = None,
         message_id: int = 4096,
         content: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> types.Update:
         message = {
             "id": message_id,
             "date": 1_700_000_000,
@@ -30,29 +30,29 @@ def message_update_factory() -> Callable[..., dict[str, Any]]:
         }
         if content:
             message.update(content)
-        return {"type": "message_new", "object": {"message": message}}
+        return types.Update(type="message_new", object={"message": message})
 
     return _factory
 
 
 @pytest.fixture
-def callback_update_factory() -> Callable[..., dict[str, Any]]:
+def callback_update_factory() -> Callable[..., types.Update]:
     def _factory(
         data: str = "ok",
         user_id: int = 111222333,
         peer_id: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> types.Update:
         payload = {"data": data}
-        return {
-            "type": "message_event",
-            "object": {
+        return types.Update(
+            type="message_event",
+            object={
                 "event_id": "evt-111222333-abcdef",
                 "user_id": user_id,
                 "peer_id": peer_id if peer_id is not None else user_id,
                 "conversation_message_id": 100,
                 "payload": payload,
             },
-        }
+        )
 
     return _factory
 

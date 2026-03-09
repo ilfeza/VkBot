@@ -10,12 +10,12 @@ except ImportError:
     redis_installed = False
 
 try:
-    import asyncpg
-    from asyncpg.pool import Pool
+    import psycopg
+    from psycopg import sql
+
     postgres_installed = True
 except ImportError:
     postgres_installed = False
-    Pool = Any
 
 
 class BaseStorage(ABC):
@@ -26,7 +26,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def set_state(self, user_id: int, state: str):
+    def set_state(self, user_id: int, state: str) -> None:
         pass
 
     @abstractmethod
@@ -34,15 +34,15 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def set_data(self, user_id: int, data: dict[str, Any]):
+    def set_data(self, user_id: int, data: dict[str, Any]) -> None:
         pass
 
     @abstractmethod
-    async def update_data(self, user_id: int, **kwargs):
+    def update_data(self, user_id: int, **kwargs: Any) -> None:
         pass
 
     @abstractmethod
-    def delete(self, user_id: int):
+    def delete(self, user_id: int) -> None:
         pass
 
 
@@ -52,28 +52,28 @@ class MemoryStorage(BaseStorage):
     Data is lost on restart. Suitable for development.
     """
 
-    def __init__(self):
-        self._states = {}
-        self._data = {}
+    def __init__(self) -> None:
+        self._states: dict[int, str] = {}
+        self._data: dict[int, dict[str, Any]] = {}
 
     def get_state(self, user_id: int) -> str | None:
         return self._states.get(user_id)
 
-    def set_state(self, user_id: int, state: str):
+    def set_state(self, user_id: int, state: str) -> None:
         self._states[user_id] = state
 
     def get_data(self, user_id: int) -> dict[str, Any]:
         return self._data.get(user_id, {}).copy()
 
-    def set_data(self, user_id: int, data: dict[str, Any]):
+    def set_data(self, user_id: int, data: dict[str, Any]) -> None:
         self._data[user_id] = data
 
-    async def update_data(self, user_id: int, **kwargs):
+    def update_data(self, user_id: int, **kwargs: Any) -> None:
         if user_id not in self._data:
             self._data[user_id] = {}
         self._data[user_id].update(kwargs)
 
-    def delete(self, user_id: int):
+    def delete(self, user_id: int) -> None:
         self._states.pop(user_id, None)
         self._data.pop(user_id, None)
 
@@ -90,7 +90,7 @@ class RedisStorage(BaseStorage):
         port: int = 6379,
         db: int = 0,
         password: str | None = None,
-    ):
+    ) -> None:
         if not redis_installed:
             raise ImportError("Redis is not installed.")
         self.redis = Redis(
@@ -106,145 +106,156 @@ class RedisStorage(BaseStorage):
     def get_state(self, user_id: int) -> str | None:
         return self.redis.get(self._state_key(user_id))
 
-    def set_state(self, user_id: int, state: str):
+    def set_state(self, user_id: int, state: str) -> None:
         self.redis.set(self._state_key(user_id), state)
 
     def get_data(self, user_id: int) -> dict[str, Any]:
         data = self.redis.get(self._data_key(user_id))
         return json.loads(data) if data else {}
 
-    def set_data(self, user_id: int, data: dict[str, Any]):
+    def set_data(self, user_id: int, data: dict[str, Any]) -> None:
         self.redis.set(self._data_key(user_id), json.dumps(data))
 
-    async def update_data(self, user_id: int, **kwargs):
-        pipe = self.redis.pipeline()
-        key = self._data_key(user_id)
-
-        current = await self.get_data(user_id)
+    def update_data(self, user_id: int, **kwargs: Any) -> None:
+        current = self.get_data(user_id)
         current.update(kwargs)
+        self.set_data(user_id, current)
 
-        pipe.set(key, json.dumps(current))
-        pipe.execute()
-
-    def delete(self, user_id: int):
+    def delete(self, user_id: int) -> None:
         self.redis.delete(self._state_key(user_id))
         self.redis.delete(self._data_key(user_id))
 
 
 class PostgresStorage(BaseStorage):
-    def __init__(
-        self,
-        dsn: str,
-        pool_min_size: int = 10,
-        pool_max_size: int = 20,
-        table_prefix: str = "vk_bot",
-    ):
+    """PostgreSQL-backed state storage using psycopg3 (synchronous).
+
+    Persistent storage with full transaction support. Suitable for production.
+
+    Requires the ``postgres`` extra: ``pip install vk-bot[postgres]``.
+
+    Args:
+        dsn: PostgreSQL connection string,
+            e.g. ``postgresql://user:pass@localhost/dbname``.
+        table_prefix: Prefix for the tables created by this storage.
+    """
+
+    def __init__(self, dsn: str, table_prefix: str = "vk_bot") -> None:
         if not postgres_installed:
             raise ImportError(
-                "asyncpg is not installed. Install with: pip install vk-bot[postgres]"
+                "psycopg is not installed. Install with: pip install vk-bot[postgres]"
             )
+        self._dsn = dsn
+        self._table_prefix = table_prefix
+        self._conn: psycopg.Connection | None = None
 
-        self.dsn = dsn
-        self.pool_min_size = pool_min_size
-        self.pool_max_size = pool_max_size
-        self.table_prefix = table_prefix
-        self._pool: Pool | None = None
+    @property
+    def _states_table(self) -> str:
+        return f"{self._table_prefix}_states"
 
-    async def _get_pool(self) -> Pool:
-        if self._pool is None:
-            self._pool = await asyncpg.create_pool(
-                dsn=self.dsn,
-                min_size=self.pool_min_size,
-                max_size=self.pool_max_size,
-            )
-            await self._init_tables()
-        return self._pool
+    @property
+    def _data_table(self) -> str:
+        return f"{self._table_prefix}_data"
 
-    async def _init_tables(self):
-        pool = await self._get_pool()
+    def _get_conn(self) -> "psycopg.Connection":
+        if self._conn is None or self._conn.closed:
+            self._conn = psycopg.connect(self._dsn)
+            self._init_tables()
+        return self._conn
 
-        async with pool.acquire() as conn:
-            await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.table_prefix}_states (
+    def _init_tables(self) -> None:
+        conn = self._conn
+        assert conn is not None
+        with conn.transaction():
+            conn.execute(
+                sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {} (
                     user_id BIGINT PRIMARY KEY,
-                    state TEXT,
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    state   TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ DEFAULT now()
                 )
-            """)
-
-            await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.table_prefix}_data (
-                    user_id BIGINT PRIMARY KEY,
-                    data JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-    async def get_state(self, user_id: int) -> str | None:
-        pool = await self._get_pool()
-
-        async with pool.acquire() as conn:
-            result = await conn.fetchval(
-                f"SELECT state FROM {self.table_prefix}_states WHERE user_id = $1",
-                user_id,
+                """).format(sql.Identifier(self._states_table))
             )
-            return result
+            conn.execute(
+                sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {} (
+                    user_id BIGINT PRIMARY KEY,
+                    data    JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+                """).format(sql.Identifier(self._data_table))
+            )
 
-    async def set_state(self, user_id: int, state: str):
-        pool = await self._get_pool()
+    def close(self) -> None:
+        """Close the database connection."""
+        if self._conn and not self._conn.closed:
+            self._conn.close()
+            self._conn = None
 
-        async with pool.acquire() as conn, conn.transaction():
-            await conn.execute(
-                f"""
-                INSERT INTO {self.table_prefix}_states (user_id, state, updated_at)
-                VALUES ($1, $2, CURRENT_TIMESTAMP)
+    def get_state(self, user_id: int) -> str | None:
+        conn = self._get_conn()
+        with conn.transaction():
+            row = conn.execute(
+                sql.SQL("SELECT state FROM {} WHERE user_id = %s").format(
+                    sql.Identifier(self._states_table)
+                ),
+                (user_id,),
+            ).fetchone()
+        return row[0] if row else None
+
+    def set_state(self, user_id: int, state: str) -> None:
+        conn = self._get_conn()
+        with conn.transaction():
+            conn.execute(
+                sql.SQL("""
+                INSERT INTO {} (user_id, state, updated_at)
+                VALUES (%s, %s, now())
                 ON CONFLICT (user_id)
-                DO UPDATE SET state = $2, updated_at = CURRENT_TIMESTAMP
-                """,
-                user_id,
-                state,
+                DO UPDATE SET state = EXCLUDED.state, updated_at = now()
+                """).format(sql.Identifier(self._states_table)),
+                (user_id, state),
             )
 
-    async def update_data(self, user_id: int, **kwargs):
-        pool = await self._get_pool()
+    def get_data(self, user_id: int) -> dict[str, Any]:
+        conn = self._get_conn()
+        with conn.transaction():
+            row = conn.execute(
+                sql.SQL("SELECT data FROM {} WHERE user_id = %s").format(
+                    sql.Identifier(self._data_table)
+                ),
+                (user_id,),
+            ).fetchone()
+        return dict(row[0]) if row else {}
 
-        async with pool.acquire() as conn, conn.transaction():
-            for key, value in kwargs.items():
-                json_value = json.dumps(value)
-
-                await conn.execute(
-                    f"""
-                    INSERT INTO {self.table_prefix}_data (user_id, data, updated_at)
-                    VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id) DO UPDATE
-                    SET data = jsonb_set(
-                        COALESCE({self.table_prefix}_data.data, '{{}}'::jsonb),
-                        $3,
-                        $4::jsonb,
-                        true
-                    ),
-                    updated_at = CURRENT_TIMESTAMP
-                    """,
-                    user_id,
-                    json.dumps({key: value}),
-                    f"{{{key}}}",
-                    json_value,
-                )
-
-    async def delete(self, user_id: int):
-        pool = await self._get_pool()
-
-        async with pool.acquire() as conn, conn.transaction():
-            await conn.execute(
-                f"DELETE FROM {self.table_prefix}_states WHERE user_id = $1",
-                user_id,
-            )
-            await conn.execute(
-                f"DELETE FROM {self.table_prefix}_data WHERE user_id = $1",
-                user_id,
+    def set_data(self, user_id: int, data: dict[str, Any]) -> None:
+        conn = self._get_conn()
+        with conn.transaction():
+            conn.execute(
+                sql.SQL("""
+                INSERT INTO {} (user_id, data, updated_at)
+                VALUES (%s, %s::jsonb, now())
+                ON CONFLICT (user_id)
+                DO UPDATE SET data = EXCLUDED.data, updated_at = now()
+                """).format(sql.Identifier(self._data_table)),
+                (user_id, json.dumps(data)),
             )
 
-    async def close(self):
-        if self._pool:
-            await self._pool.close()
-            self._pool = None
+    def update_data(self, user_id: int, **kwargs: Any) -> None:
+        current = self.get_data(user_id)
+        current.update(kwargs)
+        self.set_data(user_id, current)
+
+    def delete(self, user_id: int) -> None:
+        conn = self._get_conn()
+        with conn.transaction():
+            conn.execute(
+                sql.SQL("DELETE FROM {} WHERE user_id = %s").format(
+                    sql.Identifier(self._states_table)
+                ),
+                (user_id,),
+            )
+            conn.execute(
+                sql.SQL("DELETE FROM {} WHERE user_id = %s").format(
+                    sql.Identifier(self._data_table)
+                ),
+                (user_id,),
+            )

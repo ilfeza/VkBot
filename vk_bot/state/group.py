@@ -1,9 +1,14 @@
+from collections.abc import Iterator
+from typing import Any
+
 from vk_bot.state.manager import State
 
 
 class StatesGroup:
+    _states: dict[str, State]
+
     @classmethod
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
 
         cls._states = {}
@@ -20,7 +25,7 @@ class StatesGroup:
 
     @classmethod
     def get_all_states(cls) -> list[str]:
-        return [state._name for state in cls._states.values()]
+        return [state._name for state in cls._states.values() if state._name]
 
     @classmethod
     def is_in_group(cls, state: str) -> bool:
@@ -29,7 +34,7 @@ class StatesGroup:
     def __contains__(self, item: str) -> bool:
         return any(state._name == item for state in self._states.values())
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[State]:
         return iter(self._states.values())
 
     def __repr__(self) -> str:
