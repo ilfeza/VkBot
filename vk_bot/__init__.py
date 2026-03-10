@@ -391,6 +391,7 @@ class VKBot:
 
 
 __all__ = [
+    "FSMRegistry",
     "MemoryStorage",
     "PostgresStorage",
     "RedisStorage",
@@ -399,4 +400,5 @@ __all__ = [
     "StatesGroup",
     "VKBot",
     "VKBotFSM",
+    "util",
 ]
