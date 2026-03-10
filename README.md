@@ -14,7 +14,7 @@ This is how python package should look like!
 
 ## Documentation
 
-Документация доступна на [vkbot-rt.readthedocs.io](https://vkbot-rt.readthedocs.io/ru/latest/).
+Документация доступна на [sarkisdarbinyan.github.io/VkBot](https://sarkisdarbinyan.github.io/VkBot/).
 
 ## Installation
 
