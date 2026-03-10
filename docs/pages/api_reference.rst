@@ -1,34 +1,30 @@
-Справочник API
+API Reference
 ==============
 
 Автоматически сгенерированная документация из исходного кода.
 Для руководств с примерами смотрите соответствующие разделы документации.
 
-Класс VKBot
-------------
-
-Основной класс для создания и управления ботом.
+VKBot
+-----
 
 .. autoclass:: vk_bot.VKBot
    :members:
    :undoc-members:
    :show-inheritance:
 
-Типы данных
------------
-
-Pydantic-модели для объектов VK API: сообщения, пользователи, клавиатуры и вложения.
+Types
+-----
 
 .. automodule:: vk_bot.types
    :members:
    :undoc-members:
    :show-inheritance:
 
-Конечный автомат (FSM)
------------------------
+FSM
+---
 
-Граф переходов
-~~~~~~~~~~~~~~
+Transitions
+~~~~~~~~~~~
 
 .. autoclass:: vk_bot.state.fsm.VKBotFSM
    :members:
@@ -38,8 +34,8 @@ Pydantic-модели для объектов VK API: сообщения, пол
    :members:
    :undoc-members:
 
-Группы состояний
-~~~~~~~~~~~~~~~~
+StatesGroup
+~~~~~~~~~~~
 
 .. autoclass:: vk_bot.state.group.StatesGroup
    :members:
@@ -49,15 +45,15 @@ Pydantic-модели для объектов VK API: сообщения, пол
    :members:
    :undoc-members:
 
-Контекст состояния
-~~~~~~~~~~~~~~~~~~
+StateContext
+~~~~~~~~~~~~
 
 .. autoclass:: vk_bot.state.context.StateContext
    :members:
    :undoc-members:
 
-Хранилища состояний
--------------------
+Storage
+-------
 
 .. autoclass:: vk_bot.state.storage.BaseStorage
    :members:
@@ -78,29 +74,29 @@ Pydantic-модели для объектов VK API: сообщения, пол
    :undoc-members:
    :show-inheritance:
 
-Конфигурация
-------------
+HttpConfig
+----------
 
 .. autoclass:: vk_bot.config.HttpConfig
    :members:
    :undoc-members:
 
-Исключения
+Exceptions
 ----------
 
 .. autoclass:: vk_bot.exception.VKAPIError
    :members:
    :undoc-members:
 
-Утилиты
--------
+Utilities
+---------
 
 .. automodule:: vk_bot.util
    :members:
    :undoc-members:
 
-Обработчики
------------
+Handlers
+--------
 
 .. autofunction:: vk_bot.handlers.extract_command
 
