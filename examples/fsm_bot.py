@@ -40,7 +40,9 @@ def process_age(message: types.Message, state: StateContext):
     age = state.data.get("age", 0)
 
     state.finish()
-    bot.send_message(message.from_id, f"Registration complete. Name: {name}, Age: {age}.")
+    bot.send_message(
+        message.from_id, f"Registration complete. Name: {name}, Age: {age}."
+    )
 
 
 if __name__ == "__main__":

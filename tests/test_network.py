@@ -129,9 +129,7 @@ class TestHttpClientRetries:
         assert result == {"ok": True}
         assert mock_httpx_client.request.call_count == 2
 
-    def test_connect_error_then_success(
-        self, mock_httpx_client: MagicMock
-    ) -> None:
+    def test_connect_error_then_success(self, mock_httpx_client: MagicMock) -> None:
         client = self._make_client(mock_httpx_client)
         ok_resp = _make_response(json_data={"data": 1})
         mock_httpx_client.request.side_effect = [
@@ -186,9 +184,7 @@ class TestMakeRequest:
         assert kw["files"] is files
         assert result == {"uploaded": True}
 
-    def test_error_response_raises(
-        self, api: ApiClient, mock_http: MagicMock
-    ) -> None:
+    def test_error_response_raises(self, api: ApiClient, mock_http: MagicMock) -> None:
         mock_http.get.return_value = {
             "error": {"error_code": 5, "error_msg": "User authorization failed"}
         }
@@ -198,9 +194,7 @@ class TestMakeRequest:
         assert exc_info.value.error_code == 5
         assert "authorization" in exc_info.value.error_msg
 
-    def test_missing_response_key(
-        self, api: ApiClient, mock_http: MagicMock
-    ) -> None:
+    def test_missing_response_key(self, api: ApiClient, mock_http: MagicMock) -> None:
         mock_http.get.return_value = {"something": "else"}
         assert api._make_request("some.method") == {}
 
@@ -345,9 +339,7 @@ class TestLongPoll:
         params = mock_http.get.call_args.kwargs["params"]
         assert params["group_id"] == 999
 
-    def test_get_long_poll_updates(
-        self, api: ApiClient, mock_http: MagicMock
-    ) -> None:
+    def test_get_long_poll_updates(self, api: ApiClient, mock_http: MagicMock) -> None:
         mock_http.get.return_value = {"ts": "101", "updates": []}
         api.get_long_poll_updates("https://lp", "key", "100")
 

@@ -164,7 +164,8 @@ class PostgresStorage(BaseStorage):
 
     def _init_tables(self) -> None:
         conn = self._conn
-        assert conn is not None
+        if conn is None:
+            raise RuntimeError("Database connection is not initialized")
         with conn.transaction():
             conn.execute(
                 sql.SQL("""

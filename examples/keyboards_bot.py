@@ -31,7 +31,9 @@ def handle_statistics(message: types.Message):
 def handle_settings(message: types.Message):
     kb = types.InlineKeyboardMarkup()
     kb.add(
-        types.InlineKeyboardButton(text="Notifications", callback_data="toggle_notifications"),
+        types.InlineKeyboardButton(
+            text="Notifications", callback_data="toggle_notifications"
+        ),
         types.InlineKeyboardButton(text="Theme", callback_data="toggle_theme"),
     )
     kb.add(types.InlineKeyboardButton(text="Back", callback_data="back_to_menu"))
@@ -41,7 +43,9 @@ def handle_settings(message: types.Message):
 @bot.message_handler(func=lambda m: m.text == "Close")
 def handle_close(message: types.Message):
     kb = types.ReplyKeyboardMarkup(one_time_keyboard=True)
-    bot.send_message(message.from_id, "Menu closed. Type /menu to open again.", reply_markup=kb)
+    bot.send_message(
+        message.from_id, "Menu closed. Type /menu to open again.", reply_markup=kb
+    )
 
 
 @bot.message_handler(commands=["inline"])
@@ -58,14 +62,20 @@ def cmd_inline(message: types.Message):
 @bot.callback_query_handler(data="btn_like")
 def on_like(callback: types.CallbackQuery):
     bot.answer_callback_query(
-        callback.id, callback.from_id, callback.peer_id, text="Thank you for your rating."
+        callback.id,
+        callback.from_id,
+        callback.peer_id,
+        text="Thank you for your rating.",
     )
 
 
 @bot.callback_query_handler(data="btn_dislike")
 def on_dislike(callback: types.CallbackQuery):
     bot.answer_callback_query(
-        callback.id, callback.from_id, callback.peer_id, text="Your feedback has been recorded."
+        callback.id,
+        callback.from_id,
+        callback.peer_id,
+        text="Your feedback has been recorded.",
     )
 
 
