@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vk_bot.state import storage as _storage_mod
 from vk_bot.state.fsm import FSMRegistry
 from vk_bot.state.manager import StateManager
 from vk_bot.state.storage import (
@@ -17,7 +18,6 @@ from vk_bot.state.storage import (
     PostgresStorage,
     RedisStorage,
 )
-from vk_bot.state import storage as _storage_mod
 
 
 @pytest.fixture(autouse=True)
