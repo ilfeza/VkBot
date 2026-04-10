@@ -9,13 +9,6 @@ from vk_bot.state.group import StatesGroup
 from vk_bot.state.manager import State
 
 
-@pytest.fixture(autouse=True)
-def clean_fsm_registry():
-    FSMRegistry.clear()
-    yield
-    FSMRegistry.clear()
-
-
 def test_define_states_group():
     class Form(StatesGroup):
         name = State()

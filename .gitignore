@@ -250,3 +250,5 @@ artifacts/
 
 # safety:
 .safety/
+
+/allure-results

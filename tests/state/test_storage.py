@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vk_bot.state import storage as _storage_mod
-from vk_bot.state.fsm import FSMRegistry
 from vk_bot.state.manager import StateManager
 from vk_bot.state.storage import (
     BaseStorage,
@@ -18,23 +17,6 @@ from vk_bot.state.storage import (
     PostgresStorage,
     RedisStorage,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry():
-    FSMRegistry.clear()
-    yield
-    FSMRegistry.clear()
-
-
-@pytest.fixture
-def memory() -> MemoryStorage:
-    return MemoryStorage()
-
-
-@pytest.fixture
-def manager() -> StateManager:
-    return StateManager()
 
 
 class TestBaseStorage:
